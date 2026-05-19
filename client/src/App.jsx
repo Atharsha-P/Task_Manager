@@ -1,13 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
-import { GoogleLogin } from '@react-oauth/google';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+} from 'firebase/auth';
+import {
+  getFirestore,
+  collection,
+  query,
+  where,
+  onSnapshot,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp,
+} from 'firebase/firestore';
 
 const STATUSES = ['Planned', 'In Progress', 'Complete'];
-const STORAGE_KEY = 'task-manager-auth';
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-
-function apiPath(path) {
-  return `${API_BASE_URL}${path}`;
-}
+const auth = getAuth();
+const db = getFirestore();
 
 const defaultForm = {
   title: '',
@@ -15,15 +28,6 @@ const defaultForm = {
   dueDate: '',
   status: 'Planned',
 };
-
-function loadAuth() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : null;
-  } catch {
-    return null;
-  }
-}
 
 function statusIndex(status) {
   return STATUSES.indexOf(status);
@@ -49,89 +53,60 @@ function formatDate(value) {
       });
 }
 
-function App({ googleClientId }) {
-  const [auth, setAuth] = useState(() => loadAuth());
+function App() {
+  const [user, setUser] = useState(null);
   const [tasks, setTasks] = useState([]);
   const [filter, setFilter] = useState('All');
   const [message, setMessage] = useState('');
-  const [loading, setLoading] = useState(Boolean(auth?.token));
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState(defaultForm);
 
+  // Listen to auth state and load tasks when user changes
   useEffect(() => {
-    if (!auth?.token) {
-      return;
-    }
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      setUser(firebaseUser);
 
-    let ignore = false;
+      if (firebaseUser) {
+        try {
+          // Load tasks for this user
+          const tasksRef = collection(db, 'tasks');
+          const q = query(tasksRef, where('userId', '==', firebaseUser.uid));
 
-    async function restoreSession() {
-      try {
-        const response = await fetch(apiPath('/api/auth/me'), {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-          },
-        });
+          const unsubscribeTasks = onSnapshot(
+            q,
+            (snapshot) => {
+              const loadedTasks = snapshot.docs.map((docSnap) => ({
+                id: docSnap.id,
+                ...docSnap.data(),
+              }));
+              setTasks(loadedTasks);
+            },
+            (error) => {
+              setMessage(`Error loading tasks: ${error.message}`);
+            }
+          );
 
-        if (!response.ok) {
-          throw new Error('Session expired');
+          return unsubscribeTasks;
+        } catch (error) {
+          setMessage(`Error setting up tasks listener: ${error.message}`);
         }
-
-        const payload = await response.json();
-        if (ignore) {
-          return;
-        }
-
-        setAuth((current) => ({ ...current, user: payload.user }));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ token: auth.token, user: payload.user }));
-        await loadTasks(auth.token);
-      } catch {
-        if (!ignore) {
-          signOut();
-        }
-      } finally {
-        if (!ignore) {
-          setLoading(false);
-        }
+      } else {
+        setTasks([]);
       }
-    }
 
-    restoreSession();
-
-    return () => {
-      ignore = true;
-    };
-  }, []);
-
-  async function loadTasks(token) {
-    const response = await fetch(apiPath('/api/tasks'), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      setLoading(false);
     });
 
-    if (!response.ok) {
-      throw new Error('Unable to load tasks');
-    }
-
-    const payload = await response.json();
-    setTasks(payload.tasks || []);
-  }
-
-  // Helper to safely parse JSON responses (returns null for empty bodies)
-  async function safeParseJson(response) {
-    const text = await response.text();
-    if (!text) return null;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
+    return unsubscribe;
+  }, []);
 
   const summary = useMemo(() => {
     const counts = STATUSES.reduce(
-      (accumulator, status) => ({ ...accumulator, [status]: tasks.filter((task) => task.status === status).length }),
+      (accumulator, status) => ({
+        ...accumulator,
+        [status]: tasks.filter((task) => task.status === status).length,
+      }),
       {},
     );
 
@@ -152,69 +127,34 @@ function App({ googleClientId }) {
     return tasks.filter((task) => task.status === filter);
   }, [filter, tasks]);
 
-  function persistAuth(nextAuth) {
-    setAuth(nextAuth);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextAuth));
-  }
-
-  function signOut() {
-    setAuth(null);
-    setTasks([]);
-    setForm(defaultForm);
-    setFilter('All');
-    localStorage.removeItem(STORAGE_KEY);
-    setMessage('Signed out');
-  }
-
-  async function handleGoogleSuccess(credentialResponse) {
-    if (!credentialResponse?.credential) {
-      setMessage('Google sign-in did not return a credential');
-      return;
-    }
-
+  async function signIn() {
     setBusy(true);
     setMessage('Signing you in...');
 
     try {
-      const response = await fetch(apiPath('/api/auth/google'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ credential: credentialResponse.credential }),
-      });
-
-      const payload = await safeParseJson(response);
-
-      if (!response.ok) {
-        throw new Error(payload?.message || response.statusText || 'Google sign-in failed');
-      }
-
-      const nextAuth = {
-        token: payload?.token,
-        user: payload?.user,
-      };
-
-      persistAuth(nextAuth);
-      await loadTasks(nextAuth.token);
-      setMessage(`Welcome back, ${payload.user.name}`);
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      setMessage('Signed in successfully');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(`Sign-in failed: ${error.message}`);
     } finally {
       setBusy(false);
-      setLoading(false);
     }
   }
 
-  function handleGoogleError() {
-    setMessage('Google rejected this origin. In Google Cloud Console, add http://localhost:5173 to Authorized JavaScript origins for this client ID, then restart the frontend.');
+  function signOut() {
+    firebaseSignOut(auth).catch((error) => {
+      setMessage(`Sign out failed: ${error.message}`);
+    });
+    setForm(defaultForm);
+    setFilter('All');
+    setMessage('Signed out');
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
 
-    if (!auth?.token) {
+    if (!user) {
       setMessage('Please sign in first');
       return;
     }
@@ -228,77 +168,54 @@ function App({ googleClientId }) {
     setMessage('Creating task...');
 
     try {
-      const response = await fetch(apiPath('/api/tasks'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          Authorization: `Bearer ${auth.token}`,
-        },
-        body: JSON.stringify(form),
+      const tasksRef = collection(db, 'tasks');
+      await addDoc(tasksRef, {
+        ...form,
+        userId: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
-      const payload = await safeParseJson(response);
-
-      if (!response.ok) {
-        throw new Error(payload?.message || response.statusText || 'Task creation failed');
-      }
-
-      setTasks((current) => [payload?.task, ...current]);
       setForm(defaultForm);
       setFilter('All');
       setMessage('Task created');
     } catch (error) {
-      setMessage(error.message);
+      setMessage(`Task creation failed: ${error.message}`);
     } finally {
       setBusy(false);
     }
   }
 
   async function updateStatus(taskId, status) {
-    if (!auth?.token) {
+    if (!user) {
       return;
     }
 
     setBusy(true);
 
     try {
-      const response = await fetch(apiPath(`/api/tasks/${taskId}/status`), {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          Authorization: `Bearer ${auth.token}`,
-        },
-        body: JSON.stringify({ status }),
-      });
-      const payload = await safeParseJson(response);
-
-      if (!response.ok) {
-        throw new Error(payload?.message || response.statusText || 'Could not update task');
-      }
-
-      setTasks((current) => current.map((task) => (task._id === payload?.task?._id ? payload.task : task)));
+      const taskRef = doc(db, 'tasks', taskId);
+      await updateDoc(taskRef, { status, updatedAt: serverTimestamp() });
       setMessage(`Task moved to ${status}`);
     } catch (error) {
-      setMessage(error.message);
+      setMessage(`Update failed: ${error.message}`);
     } finally {
       setBusy(false);
     }
   }
 
-  if (loading && auth?.token) {
+  if (loading) {
     return (
       <div className="shell center-stage">
         <div className="loader-card">
-          <span className="eyebrow">Loading workspace</span>
-          <h1>Reconnecting your task board</h1>
-          <p>Restoring your session and pulling the latest cards.</p>
+          <span className="eyebrow">Loading</span>
+          <h1>Connecting to your task board</h1>
+          <p>Setting up Firebase and loading your tasks...</p>
         </div>
       </div>
     );
   }
 
-  if (!auth?.token) {
+  if (!user) {
     return (
       <div className="shell auth-shell">
         <div className="backdrop backdrop-one" />
@@ -323,8 +240,8 @@ function App({ googleClientId }) {
                 <span>Filter the board instantly and keep only what matters in view.</span>
               </article>
               <article>
-                <strong>Google sign-in</strong>
-                <span>Authenticate quickly without creating a separate account.</span>
+                <strong>Firebase-powered</strong>
+                <span>Your tasks are synced and secure with Firebase Firestore.</span>
               </article>
             </div>
           </section>
@@ -332,20 +249,11 @@ function App({ googleClientId }) {
           <section className="login-card">
             <span className="eyebrow">Get started</span>
             <h2>Sign in to unlock your task dashboard</h2>
-            <p>Use the same Google client ID on the frontend and backend.</p>
 
-            {googleClientId ? (
-              <div className="login-button-wrap">
-                <GoogleLogin onSuccess={handleGoogleSuccess} onError={handleGoogleError} />
-              </div>
-            ) : (
-              <div className="config-warning">
-                Add VITE_GOOGLE_CLIENT_ID to the client environment to enable login.
-              </div>
-            )}
-
-            <div className="config-warning">
-              If you see invalid_client or no registered origin, the Google OAuth client needs http://localhost:5173 in Authorized JavaScript origins.
+            <div className="login-button-wrap">
+              <button type="button" className="primary-button" onClick={signIn} disabled={busy}>
+                {busy ? 'Signing in...' : 'Sign in with Google'}
+              </button>
             </div>
 
             {message ? <div className="status-banner">{message}</div> : null}
@@ -363,15 +271,15 @@ function App({ googleClientId }) {
       <header className="topbar">
         <div>
           <span className="eyebrow">Task dashboard</span>
-          <h1>Welcome, {auth.user?.name || 'builder'}</h1>
+          <h1>Welcome, {user.displayName || 'builder'}</h1>
           <p>Track the work that matters and keep your backlog moving.</p>
         </div>
 
         <div className="user-chip">
-          {auth.user?.picture ? <img src={auth.user.picture} alt="User avatar" /> : null}
+          {user.photoURL ? <img src={user.photoURL} alt="User avatar" /> : null}
           <div>
-            <strong>{auth.user?.name}</strong>
-            <span>{auth.user?.email}</span>
+            <strong>{user.displayName || user.email}</strong>
+            <span>{user.email}</span>
           </div>
           <button type="button" className="ghost-button" onClick={signOut}>
             Sign out
@@ -442,7 +350,12 @@ function App({ googleClientId }) {
 
               <label>
                 Starting status
-                <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}>
+                <select
+                  value={form.status}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, status: event.target.value }))
+                  }
+                >
                   {STATUSES.map((status) => (
                     <option key={status} value={status}>
                       {status}
@@ -484,7 +397,7 @@ function App({ googleClientId }) {
                   const isDone = task.status === 'Complete';
 
                   return (
-                    <article key={task._id} className={`task-card ${isDone ? 'done' : ''}`}>
+                    <article key={task.id} className={`task-card ${isDone ? 'done' : ''}`}>
                       <div className="task-card-top">
                         <div>
                           <span className={`status-pill status-${task.status.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -493,7 +406,10 @@ function App({ googleClientId }) {
                           <h3>{task.title}</h3>
                         </div>
 
-                        <select value={task.status} onChange={(event) => updateStatus(task._id, event.target.value)}>
+                        <select
+                          value={task.status}
+                          onChange={(event) => updateStatus(task.id, event.target.value)}
+                        >
                           {STATUSES.map((status) => (
                             <option key={status} value={status}>
                               {status}
@@ -502,7 +418,11 @@ function App({ googleClientId }) {
                         </select>
                       </div>
 
-                      {task.description ? <p>{task.description}</p> : <p className="muted">No notes added yet.</p>}
+                      {task.description ? (
+                        <p>{task.description}</p>
+                      ) : (
+                        <p className="muted">No notes added yet.</p>
+                      )}
 
                       <div className="task-meta">
                         <span>Due {formatDate(task.dueDate)}</span>
@@ -513,8 +433,14 @@ function App({ googleClientId }) {
                         <span style={{ width: `${progress}%` }} />
                       </div>
 
-                      <button type="button" className="secondary-button" onClick={() => updateStatus(task._id, nextStatus(task.status))}>
-                        {task.status === 'Complete' ? 'Already complete' : `Mark as ${nextStatus(task.status)}`}
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => updateStatus(task.id, nextStatus(task.status))}
+                      >
+                        {task.status === 'Complete'
+                          ? 'Already complete'
+                          : `Mark as ${nextStatus(task.status)}`}
                       </button>
                     </article>
                   );

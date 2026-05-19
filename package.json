@@ -1,17 +1,12 @@
 {
   "name": "task-manager-app",
   "private": true,
-  "workspaces": [
-    "client",
-    "server"
-  ],
   "scripts": {
-    "dev": "concurrently -n server,client -c green,cyan \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
-    "build": "npm run build --workspace server && npm run build --workspace client",
-    "start": "npm run start --workspace server",
-    "deploy:firebase": "npm run build --workspace client && firebase deploy --only hosting,functions"
+    "dev": "npm run dev --workspace client",
+    "build": "npm run build --workspace client",
+    "deploy": "npm run build --workspace client && npx firebase-tools deploy --only hosting"
   },
-  "devDependencies": {
-    "concurrently": "^9.1.2"
-  }
+  "workspaces": [
+    "client"
+  ]
 }
