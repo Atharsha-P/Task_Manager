@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "concurrently -n server,client -c green,cyan \"npm run dev --workspace server\" \"npm run dev --workspace client\"",
     "build": "npm run build --workspace server && npm run build --workspace client",
-    "start": "npm run start --workspace server"
+    "start": "npm run start --workspace server",
+    "deploy:firebase": "npm run build --workspace client && firebase deploy --only hosting,functions"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

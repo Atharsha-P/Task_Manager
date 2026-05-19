@@ -1,6 +1,6 @@
 # Task Manager
 
-A full-stack task management app built with React, Node.js, Express, and MongoDB.
+A full-stack task management app built with React, Node.js, Express, and Firebase Firestore.
 
 ## What it does
 
@@ -13,7 +13,7 @@ A full-stack task management app built with React, Node.js, Express, and MongoDB
 ## Project Structure
 
 - `client` - React app with Vite
-- `server` - Express API backed by MongoDB
+- `server` - Express API backed by Firebase Firestore and deployed as a Firebase Function
 
 ## Setup
 
@@ -27,9 +27,7 @@ A full-stack task management app built with React, Node.js, Express, and MongoDB
    - `client/.env.example` -> `client/.env`
    - `server/.env.example` -> `server/.env`
 
-3. Start MongoDB locally or point `server/.env` to a hosted MongoDB instance.
-
-4. Run the app:
+3. Run the app:
 
    ```bash
    npm run dev
@@ -37,19 +35,23 @@ A full-stack task management app built with React, Node.js, Express, and MongoDB
 
 ## Deployment
 
-Frontend:
+This project is configured for Firebase-only deployment:
 
-- Deploy the `client` folder to Vercel.
-- Set `VITE_GOOGLE_CLIENT_ID` and `VITE_API_BASE_URL` in the Vercel project environment variables.
-- Set `VITE_API_BASE_URL` to your Render backend URL, for example `https://task-manager-api.onrender.com`.
-- Use the `client/vercel.json` file to keep SPA routing stable.
+1. Build the frontend and deploy Hosting + Functions:
 
-Backend:
+   ```bash
+   npm run deploy:firebase
+   ```
 
-- Deploy the `server` folder to Render as a Node service.
-- Set `MONGODB_URI`, `GOOGLE_CLIENT_ID`, `JWT_SECRET`, and `CLIENT_ORIGIN` in Render environment variables.
-- Set `CLIENT_ORIGIN` to your Vercel app URL, for example `https://your-app.vercel.app`.
-- The `render.yaml` file defines the service start command and environment placeholders.
+2. If you have not authenticated with Firebase CLI yet, run:
+
+   ```bash
+   npx firebase-tools login
+   ```
+
+3. Ensure project id is `task-manager-d03fc` (already configured in `.firebaserc`).
+
+4. Set function environment variables in Firebase (or Google Cloud runtime config) before deploy.
 
 ## Required Environment Variables
 
@@ -60,15 +62,21 @@ Client:
 
 Server:
 
-- `MONGODB_URI`
+- `FIREBASE_API_KEY`
+- `FIREBASE_AUTH_DOMAIN`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_STORAGE_BUCKET`
+- `FIREBASE_MESSAGING_SENDER_ID`
+- `FIREBASE_APP_ID`
+- `FIREBASE_MEASUREMENT_ID`
 - `GOOGLE_CLIENT_ID`
 - `JWT_SECRET`
 - `CLIENT_ORIGIN`
 
 ## Notes
 
-- The frontend talks to the backend through the Vite proxy at `/api` during development and through `VITE_API_BASE_URL` in production.
-- For local development, keep `VITE_API_BASE_URL` empty so the Vite proxy handles API calls.
+- The frontend talks to the backend through `/api` both in development and in Firebase Hosting rewrites.
+- Keep `VITE_API_BASE_URL` empty for same-origin API calls unless you intentionally host the API elsewhere.
 - Google sign-in requires the same Google client ID on both the client and server side.
 - The task states are fixed to Planned, In Progress, and Complete.
-- If Google sign-in shows `invalid_client` or `no registered origin`, add your deployed Vercel URL and `http://localhost:5173` to the OAuth client’s Authorized JavaScript origins in Google Cloud Console, then restart the frontend dev server.
+- If Google sign-in shows `invalid_client` or `no registered origin`, add your Firebase Hosting domain and `http://localhost:5173` to the OAuth client’s Authorized JavaScript origins in Google Cloud Console, then restart the frontend dev server.
