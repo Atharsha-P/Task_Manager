@@ -169,6 +169,7 @@ function App({ googleClientId }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
         body: JSON.stringify({ credential: credentialResponse.credential }),
       });
@@ -220,6 +221,7 @@ function App({ googleClientId }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
           Authorization: `Bearer ${auth.token}`,
         },
         body: JSON.stringify(form),
@@ -254,6 +256,7 @@ function App({ googleClientId }) {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
           Authorization: `Bearer ${auth.token}`,
         },
         body: JSON.stringify({ status }),
