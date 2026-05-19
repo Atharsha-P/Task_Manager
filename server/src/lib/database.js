@@ -1,8 +1,10 @@
-const { initializeApp, getApps } = require('firebase/app');
+const { initializeApp: initializeClientApp, getApps } = require('firebase/app');
 const { getFirestore } = require('firebase/firestore');
+const admin = require('firebase-admin');
 
 let firebaseApp;
 let firestoreDb;
+let adminInitialized = false;
 
 function getFirebaseConfig() {
   return {
@@ -31,8 +33,29 @@ async function connectDatabase() {
     throw new Error('FIREBASE_API_KEY is not configured');
   }
 
-  firebaseApp = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+  firebaseApp = getApps().length ? getApps()[0] : initializeClientApp(firebaseConfig);
   firestoreDb = getFirestore(firebaseApp);
+
+  // initialize admin SDK if not already initialized. In Cloud Functions
+  // admin.initializeApp() will use the service account automatically.
+  if (!adminInitialized) {
+    try {
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      } else {
+        admin.initializeApp();
+      }
+      adminInitialized = true;
+    } catch (e) {
+      // If admin SDK initialization fails locally (missing creds), leave it uninitialized
+      // Verification will fail until proper credentials are provided.
+      // We still export admin so callers can check.
+      // eslint-disable-next-line no-console
+      console.warn('Warning: firebase-admin initialization failed locally:', e.message || e);
+    }
+  }
+
   return firestoreDb;
 }
 
@@ -47,4 +70,5 @@ function getDatabase() {
 module.exports = {
   connectDatabase,
   getDatabase,
+  admin,
 };

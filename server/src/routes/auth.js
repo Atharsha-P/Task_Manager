@@ -1,50 +1,45 @@
 const express = require('express');
-const { OAuth2Client } = require('google-auth-library');
 const { collection, doc, getDoc, getDocs, limit, query, updateDoc, where, addDoc } = require('firebase/firestore');
 
-const { getDatabase } = require('../lib/database');
+const { getDatabase, admin } = require('../lib/database');
 const { authMiddleware } = require('../middleware/auth');
 const { createAppToken } = require('../utils/tokens');
 
 const router = express.Router();
 
+// Accepts a Firebase ID token (field `credential` or `idToken`) issued by the
+// client after signing in with Firebase Authentication. Verifies the token
+// using the Admin SDK and upserts the user into Firestore.
 router.route('/google')
   .post(async (req, res, next) => {
     try {
-      const { credential } = req.body;
+      const token = req.body.credential || req.body.idToken;
 
-      if (!credential) {
-        return res.status(400).json({ message: 'Google credential is required' });
+      if (!token) {
+        return res.status(400).json({ message: 'ID token is required' });
       }
 
-      const audience = process.env.GOOGLE_CLIENT_ID;
-
-      if (!audience) {
-        return res.status(500).json({ message: 'GOOGLE_CLIENT_ID is not configured' });
+      if (!admin || !admin.auth) {
+        return res.status(500).json({ message: 'Firebase Admin is not initialized on server' });
       }
 
-      const client = new OAuth2Client(audience);
-      const ticket = await client.verifyIdToken({
-        idToken: credential,
-        audience,
-      });
+      // Verify the Firebase ID token
+      const decoded = await admin.auth().verifyIdToken(token).catch(() => null);
 
-      const payload = ticket.getPayload();
-
-      if (!payload?.sub || !payload?.email) {
-        return res.status(401).json({ message: 'Unable to verify Google account' });
+      if (!decoded || !decoded.uid || !decoded.email) {
+        return res.status(401).json({ message: 'Unable to verify Firebase ID token' });
       }
 
       const db = getDatabase();
       const usersRef = collection(db, 'users');
-      const userQuery = query(usersRef, where('googleId', '==', payload.sub), limit(1));
+      const userQuery = query(usersRef, where('firebaseUid', '==', decoded.uid), limit(1));
       const existingUserSnapshot = await getDocs(userQuery);
 
       const userData = {
-        googleId: payload.sub,
-        name: payload.name || payload.email.split('@')[0],
-        email: payload.email,
-        picture: payload.picture || '',
+        firebaseUid: decoded.uid,
+        name: decoded.name || decoded.email.split('@')[0],
+        email: decoded.email,
+        picture: decoded.picture || '',
         updatedAt: Date.now(),
       };
 
