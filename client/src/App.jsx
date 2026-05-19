@@ -118,6 +118,17 @@ function App({ googleClientId }) {
     setTasks(payload.tasks || []);
   }
 
+  // Helper to safely parse JSON responses (returns null for empty bodies)
+  async function safeParseJson(response) {
+    const text = await response.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
   const summary = useMemo(() => {
     const counts = STATUSES.reduce(
       (accumulator, status) => ({ ...accumulator, [status]: tasks.filter((task) => task.status === status).length }),
@@ -174,15 +185,15 @@ function App({ googleClientId }) {
         body: JSON.stringify({ credential: credentialResponse.credential }),
       });
 
-      const payload = await response.json();
+      const payload = await safeParseJson(response);
 
       if (!response.ok) {
-        throw new Error(payload.message || 'Google sign-in failed');
+        throw new Error(payload?.message || response.statusText || 'Google sign-in failed');
       }
 
       const nextAuth = {
-        token: payload.token,
-        user: payload.user,
+        token: payload?.token,
+        user: payload?.user,
       };
 
       persistAuth(nextAuth);
@@ -226,14 +237,13 @@ function App({ googleClientId }) {
         },
         body: JSON.stringify(form),
       });
-
-      const payload = await response.json();
+      const payload = await safeParseJson(response);
 
       if (!response.ok) {
-        throw new Error(payload.message || 'Task creation failed');
+        throw new Error(payload?.message || response.statusText || 'Task creation failed');
       }
 
-      setTasks((current) => [payload.task, ...current]);
+      setTasks((current) => [payload?.task, ...current]);
       setForm(defaultForm);
       setFilter('All');
       setMessage('Task created');
@@ -261,14 +271,13 @@ function App({ googleClientId }) {
         },
         body: JSON.stringify({ status }),
       });
-
-      const payload = await response.json();
+      const payload = await safeParseJson(response);
 
       if (!response.ok) {
-        throw new Error(payload.message || 'Could not update task');
+        throw new Error(payload?.message || response.statusText || 'Could not update task');
       }
 
-      setTasks((current) => current.map((task) => (task._id === payload.task._id ? payload.task : task)));
+      setTasks((current) => current.map((task) => (task._id === payload?.task?._id ? payload.task : task)));
       setMessage(`Task moved to ${status}`);
     } catch (error) {
       setMessage(error.message);
