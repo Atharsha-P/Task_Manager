@@ -22,6 +22,10 @@ async function bootstrap() {
     }),
   );
   app.use(express.json({ limit: '1mb' }));
+  // Root route for simple uptime check
+  app.get('/', (req, res) => {
+    res.json({ message: 'Task Manager Backend Running Successfully' });
+  });
 
   app.get('/api/health', (req, res) => {
     res.json({ ok: true, service: 'task-manager-api' });
