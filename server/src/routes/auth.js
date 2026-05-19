@@ -1,7 +1,8 @@
 const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
+const { collection, doc, getDoc, getDocs, limit, query, updateDoc, where, addDoc } = require('firebase/firestore');
 
-const User = require('../models/User');
+const { getDatabase } = require('../lib/database');
 const { authMiddleware } = require('../middleware/auth');
 const { createAppToken } = require('../utils/tokens');
 
@@ -34,21 +35,37 @@ router.route('/google')
         return res.status(401).json({ message: 'Unable to verify Google account' });
       }
 
-      const user = await User.findOneAndUpdate(
-        { googleId: payload.sub },
-        {
-          googleId: payload.sub,
-          name: payload.name || payload.email.split('@')[0],
-          email: payload.email,
-          picture: payload.picture || '',
-        },
-        { new: true, upsert: true, setDefaultsOnInsert: true },
-      );
+      const db = getDatabase();
+      const usersRef = collection(db, 'users');
+      const userQuery = query(usersRef, where('googleId', '==', payload.sub), limit(1));
+      const existingUserSnapshot = await getDocs(userQuery);
+
+      const userData = {
+        googleId: payload.sub,
+        name: payload.name || payload.email.split('@')[0],
+        email: payload.email,
+        picture: payload.picture || '',
+        updatedAt: Date.now(),
+      };
+
+      let user;
+
+      if (!existingUserSnapshot.empty) {
+        const existingDoc = existingUserSnapshot.docs[0];
+        await updateDoc(existingDoc.ref, userData);
+        user = { id: existingDoc.id, ...existingDoc.data(), ...userData };
+      } else {
+        const createdDoc = await addDoc(usersRef, {
+          ...userData,
+          createdAt: Date.now(),
+        });
+        user = { id: createdDoc.id, ...userData };
+      }
 
       return res.json({
         token: createAppToken(user),
         user: {
-          id: user._id,
+          id: user.id,
           name: user.name,
           email: user.email,
           picture: user.picture,
@@ -64,15 +81,19 @@ router.route('/google')
 
 router.get('/me', authMiddleware, async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id).lean();
+    const db = getDatabase();
+    const userRef = doc(db, 'users', req.user.id);
+    const userSnapshot = await getDoc(userRef);
 
-    if (!user) {
+    if (!userSnapshot.exists()) {
       return res.status(404).json({ message: 'User not found' });
     }
 
+    const user = userSnapshot.data();
+
     return res.json({
       user: {
-        id: user._id,
+        id: userSnapshot.id,
         name: user.name,
         email: user.email,
         picture: user.picture,

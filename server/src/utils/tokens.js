@@ -2,10 +2,11 @@ const jwt = require('jsonwebtoken');
 
 function createAppToken(user) {
   const secret = process.env.JWT_SECRET || 'task-manager-development-secret';
+  const userId = user._id ? user._id.toString() : String(user.id);
 
   return jwt.sign(
     {
-      id: user._id.toString(),
+      id: userId,
       email: user.email,
       name: user.name,
     },

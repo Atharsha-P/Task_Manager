@@ -104,7 +104,7 @@ function App({ googleClientId }) {
   }, []);
 
   async function loadTasks(token) {
-    const response = await fetch('/api/tasks', {
+    const response = await fetch(apiPath('/api/tasks'), {
       headers: {
         Authorization: `Bearer ${token}`,
       },
